@@ -1,91 +1,125 @@
 """Utilities for converting MS41 .bin files to .mem files (for use in IDA/Ghidra)."""
 
 import os
+from io import BytesIO
+import struct
+import logging
+import click
+from .crc16 import crc
+
+_FILE_SIZE = 262144
+_LOGGER = logging.getLogger()
 
 
-def bin_to_mem(input, output):
-    """Convert .bin file to .mem file.
+class Rom:
 
-    :param input: Input file-like object to be converted
-    :param output: Output file-like object to store result
+    def __init__(self, mem_bytes):
+        if len(mem_bytes) != _FILE_SIZE:
+            raise InvalidRom(f"File size incorrect. Got {len(mem_bytes)}, expected {_FILE_SIZE}")
 
-    Example usage::
+        self._bytes = mem_bytes
 
-        with open('input.bin', 'rb') as input:
-            with open('output.mem', 'wb') as output:
-                bin_to_mem(intput, output)
-    """
-    # 0x00000 - 0x10000
-    _block_copy(input, 0x04000, output, 0x00000, 0x4000)
-    _block_copy(input, 0x00000, output, 0x04000, 0x4000)
-    _block_copy(input, 0x0c000, output, 0x08000, 0x4000)
-    _block_copy(input, 0x08000, output, 0x0C000, 0x4000)
+        # Verify checksums
+        if self._get_boot_loader_checksum() != self._calc_boot_loader_checksum():
+            _LOGGER.warning("Boot loader checksum invalid")
 
-    # 0x10000 - 0x2000
-    _block_copy(input, 0x14000, output, 0x10000, 0x4000)
-    _block_copy(input, 0x10000, output, 0x14000, 0x4000)
-    _block_copy(input, 0x1c000, output, 0x18000, 0x4000)
-    _block_copy(input, 0x18000, output, 0x1C000, 0x4000)
+        # Not working yet... something is not quite right
+        # if self._get_program_checksum() != self._calc_program_checksum():
+        #     _LOGGER.warning("Program checksum invalid")
 
-    # 0x20000 - 0x3000
-    _block_copy(input, 0x24000, output, 0x20000, 0x4000)
-    _block_copy(input, 0x20000, output, 0x24000, 0x4000)
-    _block_copy(input, 0x2c000, output, 0x28000, 0x4000)
-    _block_copy(input, 0x28000, output, 0x2C000, 0x4000)
+    @staticmethod
+    def from_bin(filename):
+        with open(filename, 'rb') as fd:
+            # Read .bin with corrected memory addresses
+            contents = b"".join(
+                _read(fd, start, 0x4000)
+                for start in [
+                    0x04000, 0x00000, 0x0c000, 0x08000,
+                    0x14000, 0x10000, 0x1c000, 0x18000,
+                    0x24000, 0x20000, 0x2c000, 0x28000,
+                    0x34000, 0x30000, 0x3c000, 0x38000,
+                ]
+            )
+            return Rom(contents)
 
-    # 0x30000 - 0x4000
-    _block_copy(input, 0x34000, output, 0x30000, 0x4000)
-    _block_copy(input, 0x30000, output, 0x34000, 0x4000)
-    _block_copy(input, 0x3c000, output, 0x38000, 0x4000)
-    _block_copy(input, 0x38000, output, 0x3C000, 0x4000)
+    @staticmethod
+    def from_mem(filename):
+        with open(filename, 'rb') as fd:
+            return Rom(fd.read())
 
+    def _get_boot_loader_checksum(self):
+        return self._bytes[0x1C80:0x1C82]
 
-def mem_to_bin(input, output):
-    """Convert .mem file to .bin file.
+    def _calc_boot_loader_checksum(self):
+        initial_value = 0x4711
+        return _checksum(self._bytes, initial_value, (0x0000, 0x1C14))
 
-    :param input: Input file-like object to be converted
-    :param output: Output file-like object to store result
+    def _get_program_checksum(self):
+        return self._bytes[0x2050:0x2052]
 
-    Example usage::
-
-        with open('input.mem', 'rb') as input:
-            with open('output.bin', 'wb') as output:
-                mem_to_bin(intput, output)
-    """
-    # 0x00000 - 0x10000
-    _block_copy(input, 0x00000, output, 0x04000, 0x4000)
-    _block_copy(input, 0x04000, output, 0x00000, 0x4000)
-
-    # fill up space used by ram with ff`s
-    _fill(output, 0x08000, 0x0c000, b"\xff")
-
-    _block_copy(input, 0x08000, output, 0x0C000, 0x4000)
-
-    # 0x10000 - 0x20000
-    _block_copy(input, 0x10000, output, 0x14000, 0x4000)
-    _block_copy(input, 0x14000, output, 0x10000, 0x4000)
-
-    _fill(output, 0x18000, 0x20000, b"\xff")
-
-    # 0x20000 - 0x30000
-    _block_copy(input, 0x20000, output, 0x24000, 0x4000)
-    _block_copy(input, 0x24000, output, 0x20000, 0x4000)
-    _block_copy(input, 0x28000, output, 0x2C000, 0x4000)
-    _block_copy(input, 0x2C000, output, 0x28000, 0x4000)
-
-    # 0x30000 - 0x40000
-    _block_copy(input, 0x30000, output, 0x34000, 0x4000)
-    _block_copy(input, 0x34000, output, 0x30000, 0x4000)
-    _block_copy(input, 0x38000, output, 0x3C000, 0x4000)
-    _block_copy(input, 0x3C000, output, 0x38000, 0x4000)
+    def _calc_program_checksum(self):
+        initial_value = struct.unpack('<H', self._bytes[0x2066:0x2068])[0]
+        sections_to_calculate = [
+            (0x02100, _find_checksum_end(self._bytes, 0x3fff)),
+            (0x04000, _find_checksum_end(self._bytes, 0x7fff)),
+            (0x20000, _find_checksum_end(self._bytes, 0x3ffff)),
+        ]
+        return _checksum(self._bytes, initial_value, *sections_to_calculate)
 
 
-def _fill(fd, start, end, b):
+    def to_bin(self):
+        fd = BytesIO()
+        fd.write(self._bytes[0x04000:0x04000 + 0x40000])
+        fd.write(self._bytes[0x00000:0x00000 + 0x40000])
+
+        # fill up space used by ram with ff`s
+        fd.write(b"\xff" * (0x0c000 - fd.tell()))
+
+        fd.write(self._bytes[0x08000:0x08000 + 0x4000])
+
+        # 0x10000 - 0x20000
+        fd.write(self._bytes[0x14000:0x14000 + 0x4000])
+        fd.write(self._bytes[0x10000:0x10000 + 0x4000])
+
+        fd.write(b"\xff" * (0x20000 - fd.tell()))
+
+        # 0x20000 - 0x30000
+        fd.write(self._bytes[0x24000:0x24000 + 0x4000])
+        fd.write(self._bytes[0x20000:0x20000 + 0x4000])
+        fd.write(self._bytes[0x2C000:0x2C000 + 0x4000])
+        fd.write(self._bytes[0x28000:0x28000 + 0x4000])
+
+        # 0x30000 - 0x40000
+        fd.write(self._bytes[0x34000:0x34000 + 0x4000])
+        fd.write(self._bytes[0x30000:0x30000 + 0x4000])
+        fd.write(self._bytes[0x3C000:0x3C000 + 0x4000])
+        fd.write(self._bytes[0x38000:0x38000 + 0x4000])
+
+        return fd.getvalue()
+
+    def to_mem(self):
+        return self._bytes[:]
+
+
+class InvalidRom(ValueError):
+    """Raised when invalid rom is passed"""
+
+
+def _read(fd, start, length):
     fd.seek(start)
-    fd.write(b * (end - start))
+    return fd.read(length)
 
 
-def _block_copy(input, in_start, output, out_start, length):
-    input.seek(in_start)
-    output.seek(out_start)
-    output.write(input.read(length))
+def _checksum(buf, initial_value, *locations):
+    sum = initial_value
+    for start, end in locations:
+        sum = crc(buf[start:end], sum)
+
+    return struct.pack('<H', sum)
+
+
+def _find_checksum_end(buf, start):
+    end = start
+    while buf[end] == b"\xff":
+        end -= 1
+    return end + 1

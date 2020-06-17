@@ -1,19 +1,23 @@
 import os
 import click
 
-from pyms41 import rom_utils
+from pyms41.rom_utils import Rom
 
-@click.group(help="Utilities for working with MS41 ECU rom and .bin files")
+@click.group(help="Tools for manipulating .bin/.rom files")
 def rom():
     pass
+
+
+@rom.command(help="Correct crc16 checksums in rom")
+@click.argument("filename", required=True)
+def checksum(filename):
+    rom = Rom.from_bin(filename)
 
 
 @rom.command(help="Converts between ECU .bin and .mem files for disassembly")
 @click.argument("filename", required=True)
 def convert(filename):
-    if os.path.getsize(filename) != 262144:
-        click.echo("Wrong file size!", err=True)
-        exit(1)
+    rom_utils.verify_rom_file(filename)
 
     file, ext = os.path.splitext(filename)
     with open(filename, "rb") as i:

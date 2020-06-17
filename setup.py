@@ -13,6 +13,7 @@ setup(
     },
     license = "BSD",
     packages = ["pyms41"],
+    test_suite = "test",
     entry_points = {
         "console_scripts": ["ms41-util=pyms41.cli:cli"],
     },

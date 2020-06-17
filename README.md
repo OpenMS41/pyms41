@@ -10,8 +10,9 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  rom  Utilities for working with MS41 ECU rom and .bin files
-  vin  Convert VIN between hex/ascii
+  ecu  Interact with MS41 ECU (reading, flashing, etc)
+  rom  Tools for manipulating .bin/.rom files
+  vin  Convert VIN between ascii and MS41 hex
 ```
 
 ## Install
@@ -22,3 +23,7 @@ pip install -e .
 ```
 
 To update to the latest simply run `git pull` and `ms41-util` and `pyms41` library will be updated without further steps.
+
+## Requirements
+* [ftd2xx](https://github.com/snmishra/ftd2xx)
+* [click](https://click.palletsprojects.com/)

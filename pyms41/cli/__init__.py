@@ -1,5 +1,6 @@
 import click
 
+from .ecu import ecu
 from .rom import rom
 from .vin import vin
 
@@ -9,6 +10,7 @@ def cli():
     pass
 
 
+cli.add_command(ecu)
 cli.add_command(rom)
 cli.add_command(vin)
 

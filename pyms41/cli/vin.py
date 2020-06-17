@@ -2,7 +2,7 @@ import os
 import click
 from pyms41 import vin_utils
 
-@click.command(help="Convert VIN between hex/ascii")
+@click.command(help="Convert VIN between ascii and MS41 hex")
 @click.argument("vin", required=True)
 def vin(vin):
     vin_bytes = None
